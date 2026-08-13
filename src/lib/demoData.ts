@@ -339,7 +339,9 @@ export const demoRankDefs = DEFAULT_RANK_DEFS
 
 export const demoSettings: Settings = {
   familyName: 'Famille Démo',
-  initiativeBonus: 15,
+  initiativeBonusPercent: 20,
+  pointsMultiplierPetit: 1,
+  pointsMultiplierGrand: 1,
   minBalance: -1000,
   theme: 'dark',
   features: {

@@ -11,13 +11,39 @@ import { Modal } from '../../components/ui/Modal'
 import { Tabs } from '../../components/ui/Tabs'
 import { cn } from '../../lib/cn'
 import { canCreateCustom, MAX_FREE_CUSTOM } from '../../lib/access'
+import { AGE_GROUP_LABELS } from '../../lib/ageGroup'
 import { formatRelative } from '../../lib/format'
 import { SHOP_CATEGORIES, SHOP_CATEGORY_KEYS, SHOP_EXAMPLES, SHOP_ICON_LIBRARY } from '../../lib/shopCatalog'
 import { useDemoMode } from '../../store/demoStore'
 import { useFamilyAuthStore } from '../../store/familyAuthStore'
 import { usePremiumUpsellStore } from '../../store/premiumUpsellStore'
 import { useCurrentUser, useStore } from '../../store/useStore'
-import type { ShopCategory, ShopItem } from '../../types'
+import type { AgeGroup, ShopCategory, ShopItem } from '../../types'
+
+/** Sélecteur Commun / Petits / Grands, réutilisé à la création et à l'édition d'un lot. */
+function AgeGroupField({
+  value,
+  onChange,
+}: {
+  value: AgeGroup | undefined
+  onChange: (value: AgeGroup | undefined) => void
+}) {
+  return (
+    <Field label="Groupe d'âge">
+      <div className="flex gap-2">
+        <Button variant={value === undefined ? 'primary' : 'soft'} className="flex-1" onClick={() => onChange(undefined)}>
+          Commun
+        </Button>
+        <Button variant={value === 'petit' ? 'primary' : 'soft'} className="flex-1" onClick={() => onChange('petit')}>
+          {AGE_GROUP_LABELS.petit}s
+        </Button>
+        <Button variant={value === 'grand' ? 'primary' : 'soft'} className="flex-1" onClick={() => onChange('grand')}>
+          {AGE_GROUP_LABELS.grand}s
+        </Button>
+      </div>
+    </Field>
+  )
+}
 
 /** true = illimité (case cochée), false = quantité précise saisie à côté. */
 function StockField({
@@ -65,6 +91,7 @@ function CreateItemModal({ onClose }: { onClose: () => void }) {
   const [icon, setIcon] = useState(SHOP_ICON_LIBRARY.cinema[0])
   const [cost, setCost] = useState('50')
   const [stock, setStock] = useState('')
+  const [ageGroup, setAgeGroup] = useState<AgeGroup | undefined>(undefined)
 
   if (!user) return null
 
@@ -81,7 +108,7 @@ function CreateItemModal({ onClose }: { onClose: () => void }) {
       return
     }
     const stockValue = stock === '' ? undefined : Math.max(0, parseInt(stock, 10) || 0)
-    createShopItem({ title: title.trim(), icon, category, cost: points, stock: stockValue }, user!.id)
+    createShopItem({ title: title.trim(), icon, category, cost: points, stock: stockValue, ageGroup }, user!.id)
     toast('Lot ajouté à la boutique !')
     onClose()
   }
@@ -159,6 +186,7 @@ function CreateItemModal({ onClose }: { onClose: () => void }) {
           />
         </Field>
         <StockField stock={stock} onChange={setStock} />
+        <AgeGroupField value={ageGroup} onChange={setAgeGroup} />
         <Button className="w-full" onClick={submit}>
           Ajouter à la boutique
         </Button>
@@ -173,6 +201,7 @@ function EditItemModal({ item, onClose }: { item: ShopItem; onClose: () => void 
   const toast = useStore((s) => s.toast)
   const [cost, setCost] = useState(String(item.cost ?? 0))
   const [stock, setStock] = useState(item.stock === undefined ? '' : String(item.stock))
+  const [ageGroup, setAgeGroup] = useState<AgeGroup | undefined>(item.ageGroup)
 
   if (!user) return null
 
@@ -183,7 +212,7 @@ function EditItemModal({ item, onClose }: { item: ShopItem; onClose: () => void 
       return
     }
     const stockValue = stock === '' ? undefined : Math.max(0, parseInt(stock, 10) || 0)
-    updateShopItem(item.id, { cost: points, stock: stockValue }, user!.id)
+    updateShopItem(item.id, { cost: points, stock: stockValue, ageGroup }, user!.id)
     toast('Lot mis à jour.')
     onClose()
   }
@@ -204,6 +233,7 @@ function EditItemModal({ item, onClose }: { item: ShopItem; onClose: () => void 
           />
         </Field>
         <StockField stock={stock} onChange={setStock} />
+        <AgeGroupField value={ageGroup} onChange={setAgeGroup} />
         {item.stock === 0 && (
           <p className="text-xs text-amber-600 dark:text-amber-400">
             Ce lot est actuellement épuisé — augmente le stock pour le remettre en vente.
@@ -367,6 +397,7 @@ export function ShopPage() {
                       {/* Lot venu d'un vœu approuvé : réservé à l'enfant qui l'a demandé, les
                           autres ne le voient pas dans leur catalogue (voir ChildShopPage.tsx). */}
                       {item.proposedBy && <Badge>Réservé à {nameOf(item.proposedBy)}</Badge>}
+                      {item.ageGroup && <Badge tone="green">{AGE_GROUP_LABELS[item.ageGroup]}s</Badge>}
                     </div>
                   </div>
                 </div>

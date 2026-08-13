@@ -14,6 +14,7 @@ import { Field, inputCls } from '../../components/ui/Field'
 import { Modal } from '../../components/ui/Modal'
 import { cn } from '../../lib/cn'
 import { AVATAR_EMOJIS } from '../../lib/categories'
+import { AGE_GROUP_LABELS, computeAgeGroup, computeAgeYears } from '../../lib/ageGroup'
 import { computeBalance } from '../../lib/balance'
 import { computeLifetimePoints, computePoints } from '../../lib/points'
 import { computeRank } from '../../lib/ranks'
@@ -139,13 +140,18 @@ function EditChildModal({ child, onClose }: { child: User; onClose: () => void }
   const [name, setName] = useState(child.name)
   const [color, setColor] = useState(child.color)
   const [pin, setPin] = useState('')
+  const [birthdate, setBirthdate] = useState(child.birthdate ? format(child.birthdate, 'yyyy-MM-dd') : '')
   const [editingAvatar, setEditingAvatar] = useState(false)
 
   if (!user) return null
 
   async function submit() {
     if (!name.trim()) return
-    updateChild(child.id, { name: name.trim(), color }, user!.id)
+    updateChild(
+      child.id,
+      { name: name.trim(), color, birthdate: birthdate ? new Date(birthdate).getTime() : undefined },
+      user!.id,
+    )
     if (pin) {
       if (!/^\d{4}$/.test(pin)) {
         toast('Le PIN doit faire exactement 4 chiffres.', 'error')
@@ -192,6 +198,15 @@ function EditChildModal({ child, onClose }: { child: User; onClose: () => void }
             value={pin}
             onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
             placeholder="••••"
+          />
+        </Field>
+        <Field label="Date de naissance (optionnel — sert au groupe Petit/Grand, voir Réglages)">
+          <input
+            className={inputCls}
+            type="date"
+            value={birthdate}
+            max={format(new Date(), 'yyyy-MM-dd')}
+            onChange={(e) => setBirthdate(e.target.value)}
           />
         </Field>
         <div className="flex justify-end gap-2 pt-2">
@@ -283,6 +298,7 @@ export function ChildrenPage() {
   const transactions = useStore((s) => s.transactions)
   const pointsTransactions = useStore((s) => s.pointsTransactions)
   const rankDefs = useStore((s) => s.rankDefs)
+  const settings = useStore((s) => s.settings)
   const updateChild = useStore((s) => s.updateChild)
   const resetBalance = useStore((s) => s.resetBalance)
   const toast = useStore((s) => s.toast)
@@ -333,6 +349,7 @@ export function ChildrenPage() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {children.map((child) => {
           const rank = rankDefs.length > 0 ? computeRank(computeLifetimePoints(pointsTransactions, child.id), rankDefs) : null
+          const ageGroup = computeAgeGroup(child.birthdate, settings.ageGroupThresholdYears)
           return (
           <Card key={child.id} className={cn('p-5', !child.isActive && 'opacity-60')}>
             <div className="flex items-center gap-4">
@@ -341,6 +358,11 @@ export function ChildrenPage() {
                 <p className="flex items-center gap-2 font-bold">
                   {child.name}
                   {!child.isActive && <Badge>Inactif</Badge>}
+                  {child.birthdate !== undefined && (
+                    <Badge>
+                      {computeAgeYears(child.birthdate)} ans{ageGroup ? ` · ${AGE_GROUP_LABELS[ageGroup]}` : ''}
+                    </Badge>
+                  )}
                 </p>
                 <div className="flex flex-wrap items-baseline gap-x-2">
                   <AnimatedBalance cents={computeBalance(transactions, child.id)} className="text-xl font-black" />

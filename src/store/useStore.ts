@@ -2,13 +2,14 @@ import { create } from 'zustand'
 import { useDemoMode, useDemoStore } from './demoStore'
 import { db, load, save } from '../db/storage'
 import { defaultSettings, seedStreakDefs } from '../db/seed'
+import { computeAgeGroup, pointsMultiplierFor } from '../lib/ageGroup'
 import { computeBadges, DEFAULT_BADGE_DEFS } from '../lib/badges'
 import { computeBalance } from '../lib/balance'
 import { hashSecret, makeSalt, verifySecret } from '../lib/crypto'
 import { formatEuro } from '../lib/format'
 import { uid } from '../lib/id'
 import { computeLoans } from '../lib/loans'
-import { capWeeklyGain, computePoints, computeTaskPoints } from '../lib/points'
+import { capWeeklyGain, computeInitiativeBonus, computePoints, computeTaskPoints } from '../lib/points'
 import { DEFAULT_RANK_DEFS } from '../lib/ranks'
 import { broadcastNotification } from '../lib/realtime'
 import { sendPushTo } from '../lib/push'
@@ -16,6 +17,7 @@ import { approvedOccurrenceIndexToday, isTaskAvailable } from '../lib/recurrence
 import { computeStreakDefCount } from '../lib/streak'
 import { deleteRecord, fetchAll, pushRecord, type SyncTable } from '../lib/sync'
 import type {
+  AgeGroup,
   AppNotification,
   AuditLog,
   BadgeDef,
@@ -200,7 +202,7 @@ export interface Store {
 
   updateChild: (
     childId: string,
-    patch: Partial<Pick<User, 'name' | 'avatar' | 'color' | 'isActive'>>,
+    patch: Partial<Pick<User, 'name' | 'avatar' | 'color' | 'isActive' | 'birthdate'>>,
     actorId: string,
   ) => void
   updateAvatar: (
@@ -256,13 +258,20 @@ export interface Store {
   deleteSavingsGoal: (goalId: string, actorId: string) => void
 
   createShopItem: (
-    input: { title: string; icon: string; category: ShopCategory; cost: number; stock?: number },
+    input: { title: string; icon: string; category: ShopCategory; cost: number; stock?: number; ageGroup?: AgeGroup },
     actorId: string,
   ) => void
   /** Modifie un lot existant — sert notamment à réapprovisionner (augmenter le stock). */
   updateShopItem: (
     itemId: string,
-    patch: Partial<{ title: string; icon: string; category: ShopCategory; cost: number; stock: number }>,
+    patch: Partial<{
+      title: string
+      icon: string
+      category: ShopCategory
+      cost: number
+      stock: number
+      ageGroup: AgeGroup | undefined
+    }>,
     actorId: string,
   ) => void
   deleteShopItem: (itemId: string, actorId: string) => void
@@ -1051,10 +1060,11 @@ const useRealStore = create<Store>((set, get) => {
     },
 
     approveSubmission: (submissionId, parentId) => {
-      const { submissions, tasks, settings, pointsTransactions } = get()
+      const { submissions, tasks, settings, pointsTransactions, users } = get()
       const sub = submissions.find((s) => s.id === submissionId)
       const task = sub && tasks.find((t) => t.id === sub.taskId)
       if (!sub || !task || sub.status !== 'pending') return
+      const child = users.find((u) => u.id === sub.childId)
       // Rendement dégressif : seules les tâches répétables (dailyLimit > 1) sont concernées,
       // -20 % par répétition déjà validée aujourd'hui, jamais sous 1 point.
       const occurrenceIndex =
@@ -1062,8 +1072,12 @@ const useRealStore = create<Store>((set, get) => {
           ? approvedOccurrenceIndexToday(task.id, sub.childId, sub, submissions)
           : 0
       const basePoints = computeTaskPoints(task.points, occurrenceIndex)
-      const bonus = sub.isInitiative ? settings.initiativeBonus : 0
-      const rawPoints = basePoints + bonus
+      const bonus = sub.isInitiative ? computeInitiativeBonus(basePoints, settings.initiativeBonusPercent) : 0
+      // Groupe d'âge (Petit/Grand) : neutre (×1) tant que la famille n'a pas réglé de seuil ou
+      // que la date de naissance de l'enfant est inconnue — voir lib/ageGroup.ts.
+      const ageGroup = computeAgeGroup(child?.birthdate, settings.ageGroupThresholdYears)
+      const multiplier = pointsMultiplierFor(ageGroup, settings)
+      const rawPoints = Math.round((basePoints + bonus) * multiplier)
       const points = capWeeklyGain(rawPoints, sub.childId, pointsTransactions, settings.weeklyPointsCap)
       const capped = points < rawPoints
       const ptx: PointsTransaction = {
@@ -1546,6 +1560,7 @@ const useRealStore = create<Store>((set, get) => {
         category: input.category,
         cost: input.cost,
         stock: input.stock,
+        ageGroup: input.ageGroup,
         status: 'active',
         createdBy: actorId,
         createdAt: Date.now(),
@@ -1650,6 +1665,18 @@ const useRealStore = create<Store>((set, get) => {
       if (item.proposedBy && item.proposedBy !== childId) {
         get().toast('Ce lot vient du vœu d\'un autre enfant.', 'error')
         return false
+      }
+      // Lot réservé à un groupe d'âge (voir aussi le filtre du catalogue dans
+      // ChildShopPage.tsx) — vérifié ici aussi pour ne pas dépendre uniquement du fait que le
+      // bouton soit masqué côté UI.
+      if (item.ageGroup) {
+        const { users, settings } = get()
+        const child = users.find((u) => u.id === childId)
+        const group = computeAgeGroup(child?.birthdate, settings.ageGroupThresholdYears)
+        if (item.ageGroup !== group) {
+          get().toast("Ce lot n'est pas disponible pour ton groupe d'âge.", 'error')
+          return false
+        }
       }
       if (item.stock !== undefined && item.stock <= 0) {
         get().toast('Ce lot est épuisé.', 'error')

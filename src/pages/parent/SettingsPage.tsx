@@ -232,8 +232,13 @@ export function SettingsPage() {
   const [packBusy, setPackBusy] = useState<string | null>(null)
 
   const [familyName, setFamilyName] = useState(settings.familyName)
-  const [bonus, setBonus] = useState(String(settings.initiativeBonus))
+  const [bonusPercent, setBonusPercent] = useState(String(settings.initiativeBonusPercent))
   const [minBalance, setMinBalance] = useState(centsToEuroInput(settings.minBalance))
+  const [ageThreshold, setAgeThreshold] = useState(
+    settings.ageGroupThresholdYears === undefined ? '' : String(settings.ageGroupThresholdYears),
+  )
+  const [multiplierPetit, setMultiplierPetit] = useState(String(settings.pointsMultiplierPetit))
+  const [multiplierGrand, setMultiplierGrand] = useState(String(settings.pointsMultiplierGrand))
   const [password, setPassword] = useState('')
   const [resettingSeason, setResettingSeason] = useState(false)
   const [pointsPerEuro, setPointsPerEuro] = useState(String(settings.pointsPerEuro))
@@ -310,12 +315,25 @@ export function SettingsPage() {
     updateSettings(
       {
         familyName: familyName.trim() || 'KidsUp',
-        initiativeBonus: Math.max(0, parseInt(bonus, 10) || 0),
+        initiativeBonusPercent: Math.max(0, parseInt(bonusPercent, 10) || 0),
         minBalance: Math.min(0, euroToCents(minBalance)),
       },
       user!.id,
     )
     toast('Réglages enregistrés.')
+  }
+
+  function saveAgeGroupSettings() {
+    const threshold = ageThreshold.trim() === '' ? undefined : Math.max(0, parseInt(ageThreshold, 10) || 0)
+    updateSettings(
+      {
+        ageGroupThresholdYears: threshold,
+        pointsMultiplierPetit: Math.max(0, parseFloat(multiplierPetit.replace(',', '.')) || 1),
+        pointsMultiplierGrand: Math.max(0, parseFloat(multiplierGrand.replace(',', '.')) || 1),
+      },
+      user!.id,
+    )
+    toast('Groupes d\'âge enregistrés.')
   }
 
   function savePointsSettings() {
@@ -375,15 +393,15 @@ export function SettingsPage() {
           <input className={inputCls} value={familyName} onChange={(e) => setFamilyName(e.target.value)} />
         </Field>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="Bonus initiative (points)">
+          <Field label="Bonus initiative (% du barème de la tâche)">
             <input
               className={inputCls}
               type="number"
               min="0"
               step="1"
               inputMode="numeric"
-              value={bonus}
-              onChange={(e) => setBonus(e.target.value)}
+              value={bonusPercent}
+              onChange={(e) => setBonusPercent(e.target.value)}
             />
           </Field>
           <Field label="Solde minimum toléré (€, négatif)">
@@ -400,6 +418,54 @@ export function SettingsPage() {
         </div>
         <div className="flex justify-end">
           <Button onClick={saveRules}>Enregistrer</Button>
+        </div>
+      </Card>
+
+      <Card className="space-y-4 p-5">
+        <h2 className="font-bold">Groupes d'âge (Petit / Grand)</h2>
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          Sépare les points gagnés et le catalogue de la boutique entre petits et grands.
+          Renseigne aussi la date de naissance de chaque enfant (page Enfants). Tant que le
+          seuil ci-dessous est vide, rien ne change pour personne.
+        </p>
+        <Field label="Seuil « grand » à partir de (années, vide = désactivé)">
+          <input
+            className={inputCls}
+            type="number"
+            min="0"
+            step="1"
+            inputMode="numeric"
+            placeholder="ex : 8"
+            value={ageThreshold}
+            onChange={(e) => setAgeThreshold(e.target.value)}
+          />
+        </Field>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Multiplicateur de points — Petits">
+            <input
+              className={inputCls}
+              type="number"
+              min="0"
+              step="0.1"
+              inputMode="decimal"
+              value={multiplierPetit}
+              onChange={(e) => setMultiplierPetit(e.target.value)}
+            />
+          </Field>
+          <Field label="Multiplicateur de points — Grands">
+            <input
+              className={inputCls}
+              type="number"
+              min="0"
+              step="0.1"
+              inputMode="decimal"
+              value={multiplierGrand}
+              onChange={(e) => setMultiplierGrand(e.target.value)}
+            />
+          </Field>
+        </div>
+        <div className="flex justify-end">
+          <Button onClick={saveAgeGroupSettings}>Enregistrer</Button>
         </div>
       </Card>
 

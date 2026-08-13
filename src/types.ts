@@ -29,7 +29,12 @@ export interface User {
   color: string
   createdAt: number
   isActive: boolean
+  /** Date de naissance (ms epoch), optionnelle — sert à dériver le groupe d'âge (voir lib/ageGroup.ts). */
+  birthdate?: number
 }
+
+/** « Petit » vs « Grand » : dérivé de birthdate + Settings.ageGroupThresholdYears, jamais stocké (voir lib/ageGroup.ts). */
+export type AgeGroup = 'petit' | 'grand'
 
 export interface Recurrence {
   frequency: Frequency
@@ -172,8 +177,12 @@ export interface DailyReminderSettings {
 
 export interface Settings {
   familyName: string
-  /** Bonus (en points) pour une tâche faite sans qu'on le demande. */
-  initiativeBonus: number
+  /**
+   * Bonus pour une tâche faite sans qu'on le demande, en % du barème de la tâche (ex: 20 =
+   * +20%) — proportionnel plutôt qu'un montant fixe, pour rester cohérent qu'une tâche vaille
+   * 10 ou 300 points (voir useStore.ts approveSubmission et lib/points.ts computeInitiativeBonus).
+   */
+  initiativeBonusPercent: number
   minBalance: number
   theme: Theme
   features: FeatureFlags
@@ -182,6 +191,15 @@ export interface Settings {
   inactivityPenalty: InactivityPenaltySettings
   weeklyPointsCap: WeeklyPointsCapSettings
   dailyReminder: DailyReminderSettings
+  /**
+   * Âge (en années) à partir duquel un enfant est « grand » plutôt que « petit » (voir
+   * lib/ageGroup.ts). `undefined` = fonctionnalité non activée : tant qu'aucun seuil n'est
+   * réglé, tous les enfants sont traités pareil (aucun changement de comportement).
+   */
+  ageGroupThresholdYears?: number
+  /** Multiplicateurs de points appliqués au gain d'une tâche selon le groupe d'âge (1 = neutre). */
+  pointsMultiplierPetit: number
+  pointsMultiplierGrand: number
 }
 
 /** Objectif d'épargne fixé par un enfant (ex: un jeu vidéo à 30€). */
@@ -369,6 +387,8 @@ export interface ShopItem {
   /** Quantité disponible. undefined = illimité. 0 = épuisé (le parent réapprovisionne en augmentant ce nombre). */
   stock?: number
   proposedBy?: string
+  /** Groupe d'âge auquel ce lot est réservé. undefined = commun, visible de tous (dont les lots déjà existants). */
+  ageGroup?: AgeGroup
   createdBy: string
   createdAt: number
 }

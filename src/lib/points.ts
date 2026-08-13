@@ -19,6 +19,15 @@ export function computePoints(pointsTransactions: PointsTransaction[], childId: 
 }
 
 /**
+ * Bonus « initiative » (tâche faite sans qu'on le demande), en % du barème de la tâche plutôt
+ * qu'un montant fixe — un montant fixe donnait le même bonus à une tâche à 10 pts et à une
+ * tâche à 300 pts, ce qui n'a pas de sens (voir Settings.initiativeBonusPercent).
+ */
+export function computeInitiativeBonus(basePoints: number, percent: number): number {
+  return Math.round((basePoints * percent) / 100)
+}
+
+/**
  * Points effectifs d'une validation, avec rendement dégressif pour les tâches répétables
  * (dailyLimit > 1) : chaque répétition du même jour rapporte 20 % de moins que la
  * précédente, jamais moins de 1 point — évite qu'une tâche répétable devienne un moyen de

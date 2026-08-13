@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { capWeeklyGain, computeLifetimePoints, computePoints, computeTaskPoints, weeklyGains } from './points'
+import {
+  capWeeklyGain,
+  computeInitiativeBonus,
+  computeLifetimePoints,
+  computePoints,
+  computeTaskPoints,
+  weeklyGains,
+} from './points'
 import type { PointsTransaction, WeeklyPointsCapSettings } from '../types'
 
 const CHILD = 'child-1'
@@ -73,6 +80,23 @@ describe('computeTaskPoints', () => {
     expect(computeTaskPoints(5, 1)).toBe(4)
     expect(computeTaskPoints(1, 5)).toBe(1)
     expect(computeTaskPoints(2, 10)).toBe(1)
+  })
+})
+
+describe('computeInitiativeBonus', () => {
+  it('est proportionnel au barème de la tâche, pas un montant fixe', () => {
+    // Même pourcentage (20%), tâches de valeurs très différentes : le bonus suit.
+    expect(computeInitiativeBonus(10, 20)).toBe(2)
+    expect(computeInitiativeBonus(300, 20)).toBe(60)
+  })
+
+  it('arrondit au point le plus proche', () => {
+    expect(computeInitiativeBonus(15, 20)).toBe(3)
+    expect(computeInitiativeBonus(7, 15)).toBe(1) // 1.05 → 1
+  })
+
+  it('vaut 0 à 0 %', () => {
+    expect(computeInitiativeBonus(300, 0)).toBe(0)
   })
 })
 

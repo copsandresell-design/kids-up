@@ -133,7 +133,9 @@ export function seedStreakDefs(tasks: Task[]): StreakDef[] {
 
 export const defaultSettings: Settings = {
   familyName: 'KidsUp',
-  initiativeBonus: 15,
+  initiativeBonusPercent: 20,
+  pointsMultiplierPetit: 1,
+  pointsMultiplierGrand: 1,
   minBalance: -1000,
   theme: 'dark',
   features: {

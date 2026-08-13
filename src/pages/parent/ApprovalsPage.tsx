@@ -14,8 +14,10 @@ import { Modal } from '../../components/ui/Modal'
 import { PointsAmount } from '../../components/ui/PointsAmount'
 import { Tabs } from '../../components/ui/Tabs'
 import { celebrate } from '../../lib/confetti'
+import { computeAgeGroup, pointsMultiplierFor } from '../../lib/ageGroup'
 import { gradientEnd } from '../../lib/colors'
 import { formatRelative } from '../../lib/format'
+import { computeInitiativeBonus } from '../../lib/points'
 import { useCurrentUser, useStore } from '../../store/useStore'
 import type { SubmissionStatus, TaskSubmission, User } from '../../types'
 
@@ -127,8 +129,10 @@ export function ApprovalsPage() {
           const task = findTask(sub)
           const child = findChild(sub)
           if (!child) return null
-          const bonus = sub.isInitiative ? settings.initiativeBonus : 0
-          const total = (task?.points ?? 0) + bonus
+          const basePoints = task?.points ?? 0
+          const bonus = sub.isInitiative ? computeInitiativeBonus(basePoints, settings.initiativeBonusPercent) : 0
+          const ageGroup = computeAgeGroup(child.birthdate, settings.ageGroupThresholdYears)
+          const total = Math.round((basePoints + bonus) * pointsMultiplierFor(ageGroup, settings))
           return (
             <Card key={sub.id} className="p-4">
               <div className="flex items-center gap-3">
@@ -147,7 +151,7 @@ export function ApprovalsPage() {
                   )}
                   {sub.isInitiative && (
                     <Badge tone="amber" className="mt-1">
-                      ⭐ Initiative +{settings.initiativeBonus} pts
+                      ⭐ Initiative +{bonus} pts
                     </Badge>
                   )}
                   {sub.status === 'rejected' && sub.rejectionReason && (

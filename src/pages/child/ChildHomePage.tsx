@@ -16,7 +16,7 @@ import { Modal } from '../../components/ui/Modal'
 import { db } from '../../db/storage'
 import { computeBadges, type BadgeState } from '../../lib/badges'
 import { computeBalance } from '../../lib/balance'
-import { computeLifetimePoints, computePoints } from '../../lib/points'
+import { computeInitiativeBonus, computeLifetimePoints, computePoints } from '../../lib/points'
 import { computeLevel } from '../../lib/levels'
 import { computeRank } from '../../lib/ranks'
 import { CATEGORIES, CATEGORY_KEYS, DIFFICULTIES, TASK_EMOJIS } from '../../lib/categories'
@@ -684,7 +684,8 @@ export function ChildHomePage() {
           <span className="text-sm">
             ⭐ Je l'ai fait <strong>sans qu'on me le demande</strong>
             <span className="block text-xs text-slate-500 dark:text-slate-400">
-              Bonus initiative : +{settings.initiativeBonus} points
+              Bonus initiative : +{computeInitiativeBonus(confirming?.points ?? 0, settings.initiativeBonusPercent)}{' '}
+              points
             </span>
           </span>
         </label>

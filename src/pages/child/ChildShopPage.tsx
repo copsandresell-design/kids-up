@@ -8,6 +8,7 @@ import { EmptyState } from '../../components/ui/EmptyState'
 import { Field, inputCls } from '../../components/ui/Field'
 import { Modal } from '../../components/ui/Modal'
 import { db } from '../../db/storage'
+import { computeAgeGroup } from '../../lib/ageGroup'
 import { celebrate, celebrateFireworks } from '../../lib/confetti'
 import { cn } from '../../lib/cn'
 import { formatEuro, formatRelative } from '../../lib/format'
@@ -201,11 +202,17 @@ export function ChildShopPage() {
   if (!user) return null
 
   const points = computePoints(pointsTransactions, user.id)
+  const myAgeGroup = computeAgeGroup(user.birthdate, settings.ageGroupThresholdYears)
   // Un lot venu d'un vœu approuvé (proposedBy défini) reste réservé à l'enfant qui l'a demandé —
   // seuls les lots créés directement par un parent (proposedBy absent) sont partagés entre tous
-  // les enfants. Voir aussi redeemShopItem dans useStore.ts (même règle appliquée côté store).
+  // les enfants. Idem pour ageGroup : un lot réservé à un groupe (Petit/Grand, voir Réglages)
+  // n'apparaît que dans le catalogue de ce groupe, les lots communs (ageGroup absent) restent
+  // visibles de tous. Voir aussi redeemShopItem dans useStore.ts (mêmes règles côté store).
   const catalogue = shopItems.filter(
-    (i) => i.status === 'active' && (!i.proposedBy || i.proposedBy === user.id),
+    (i) =>
+      i.status === 'active' &&
+      (!i.proposedBy || i.proposedBy === user.id) &&
+      (!i.ageGroup || i.ageGroup === myAgeGroup),
   )
   const myWishes = shopItems.filter((i) => i.status === 'proposed' && i.proposedBy === user.id)
   const myRedemptions = redemptions.filter((r) => r.childId === user.id).slice(0, 10)
