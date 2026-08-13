@@ -108,6 +108,19 @@ describe('computeNoPenaltyStreak', () => {
     const transactions = [tx('2026-07-20T10:00:00', { cancelled: true })]
     expect(computeNoPenaltyStreak(CHILD, transactions, NOW)).toBeGreaterThan(300)
   })
+
+  it('borné par `since`, un enfant sans historique ne dépasse pas son ancienneté réelle', () => {
+    // Compte créé il y a 5 jours : sans `since`, on plafonnerait à 366 (garde-fou) alors que
+    // l'enfant n'existe que depuis 5 jours — c'est le bug du badge "366 jours" auto-validé.
+    const createdAt = new Date('2026-07-17T09:00:00').getTime()
+    expect(computeNoPenaltyStreak(CHILD, [], NOW, createdAt)).toBe(6)
+  })
+
+  it('`since` n’écourte pas une série qui s’arrête déjà avant sur une pénalité', () => {
+    const createdAt = new Date('2026-01-01T00:00:00').getTime()
+    const transactions = [tx('2026-07-20T10:00:00')]
+    expect(computeNoPenaltyStreak(CHILD, transactions, NOW, createdAt)).toBe(2)
+  })
 })
 
 describe('computeStreakDefCount / streakDefMilestonesReached', () => {

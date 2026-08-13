@@ -505,7 +505,12 @@ const useRealStore = create<Store>((set, get) => {
 
     for (const child of children) {
       for (const def of streakDefs.filter((d) => d.isActive)) {
-        const count = computeStreakDefCount(def, child.id, { submissions, transactions, now })
+        const count = computeStreakDefCount(def, child.id, {
+          submissions,
+          transactions,
+          now,
+          childCreatedAt: child.createdAt,
+        })
         for (const tier of def.tiers) {
           if (count < tier.days) continue
           const key = `streak:${def.id}:${tier.days}`
@@ -1992,47 +1997,93 @@ const useRealStore = create<Store>((set, get) => {
     },
 
     revokeBadgeClaim: (childId, badgeDefId, actorId) => {
-      const { rewardClaims, pointsTransactions, badgeDefs, users } = get()
-      const key = `badge:${badgeDefId}`
-      const claim = rewardClaims.find((r) => r.childId === childId && r.key === key)
-      if (!claim) return false
+      const { rewardClaims, pointsTransactions, badgeDefs, streakDefs, users } = get()
       const def = badgeDefs.find((b) => b.id === badgeDefId)
       const child = users.find((u) => u.id === childId)
-      // Les claims créés avant l'ajout du champ relatedTo (voir awardReward) n'ont pas de lien
-      // direct : on retombe alors sur la transaction 'badge' la plus récente au libellé attendu.
-      const ptx =
-        pointsTransactions.find((p) => p.relatedTo === claim.id && p.type === 'badge') ??
-        (def
-          ? pointsTransactions
-              .filter((p) => p.childId === childId && p.type === 'badge' && p.description === `Badge débloqué : ${def.emoji} ${def.label}`)
-              .sort((a, b) => b.createdAt - a.createdAt)[0]
-          : undefined)
-      const alreadyReversed = ptx && pointsTransactions.some((p) => p.relatedTo === ptx.id && p.type === 'badge_reverted')
-      set((s) => ({ rewardClaims: s.rewardClaims.filter((r) => r.id !== claim.id) }))
-      persist('rewardClaims')
-      if (ptx && !alreadyReversed) {
-        const reversal: PointsTransaction = {
-          id: uid(),
-          type: 'badge_reverted',
-          childId,
-          amount: -ptx.amount,
-          description: `Badge retiré : ${def?.emoji ?? '🏅'} ${def?.label ?? 'badge'} (correction)`,
-          relatedTo: ptx.id,
-          createdBy: actorId,
-          createdAt: Date.now(),
-        }
-        set((s) => ({ pointsTransactions: [reversal, ...s.pointsTransactions] }))
-        persist('pointsTransactions')
+
+      // Un badge streak_tier se débloque en observant le claim de SÉRIE sous-jacent, pas un
+      // claim qui lui serait propre (voir computeBadges : unlocked = hasClaim(`streak:...`)).
+      // Ne retirer que `badge:${badgeDefId}` ne sert donc à rien pour ce genre : le claim de
+      // série reste présent, computeBadges continue de voir le badge comme mérité, et
+      // checkRewards le re-crédite instantanément au prochain passage — le badge « revient »
+      // tout seul. Il faut retirer les DEUX claims (série + badge) pour que ça tienne.
+      const streakDef =
+        def?.kind === 'streak_tier' && def.params.streakDefId
+          ? streakDefs.find((d) => d.id === def.params.streakDefId)
+          : undefined
+      const keys: Array<{ key: string; streak: boolean }> = [{ key: `badge:${badgeDefId}`, streak: false }]
+      if (streakDef && def?.params.days !== undefined) {
+        keys.push({ key: `streak:${streakDef.id}:${def.params.days}`, streak: true })
       }
+
+      let removed = false
+      let totalReversed = 0
+      const newClaims: RewardClaim[] = []
+      const newReversals: PointsTransaction[] = []
+
+      for (const { key, streak } of keys) {
+        const claim = rewardClaims.find((r) => r.childId === childId && r.key === key)
+        if (!claim) continue
+        removed = true
+        newClaims.push(claim)
+        const expectedType = streak ? 'streak_bonus' : 'badge'
+        const expectedDescription = streak
+          ? `${streakDef?.emoji ?? ''} ${streakDef?.label ?? ''} — ${def?.params.days} jours !`.trim()
+          : def
+            ? `Badge débloqué : ${def.emoji} ${def.label}`
+            : undefined
+        // Les claims créés avant l'ajout du champ relatedTo (voir awardReward) n'ont pas de lien
+        // direct : on retombe alors sur la transaction la plus récente au libellé attendu.
+        const ptx =
+          pointsTransactions.find((p) => p.relatedTo === claim.id && p.type === expectedType) ??
+          (expectedDescription
+            ? pointsTransactions
+                .filter(
+                  (p) => p.childId === childId && p.type === expectedType && p.description === expectedDescription,
+                )
+                .sort((a, b) => b.createdAt - a.createdAt)[0]
+            : undefined)
+        const alreadyReversed =
+          ptx &&
+          pointsTransactions.some(
+            (p) => p.relatedTo === ptx.id && (p.type === 'badge_reverted' || p.type === 'streak_reverted'),
+          )
+        if (ptx && !alreadyReversed) {
+          const reversal: PointsTransaction = {
+            id: uid(),
+            type: streak ? 'streak_reverted' : 'badge_reverted',
+            childId,
+            amount: -ptx.amount,
+            description: streak
+              ? `Série retirée : ${expectedDescription} (correction)`
+              : `Badge retiré : ${def?.emoji ?? '🏅'} ${def?.label ?? 'badge'} (correction)`,
+            relatedTo: ptx.id,
+            createdBy: actorId,
+            createdAt: Date.now(),
+          }
+          newReversals.push(reversal)
+          totalReversed += ptx.amount
+        }
+      }
+
+      if (!removed) return false
+
+      set((s) => ({
+        rewardClaims: s.rewardClaims.filter((r) => !newClaims.some((c) => c.id === r.id)),
+        pointsTransactions: [...newReversals, ...s.pointsTransactions],
+      }))
+      persist('rewardClaims')
+      if (newReversals.length > 0) persist('pointsTransactions')
+
       pushLog(
         'badge_claim_revoked',
         actorId,
         `${def?.emoji ?? '🏅'} ${def?.label ?? 'badge'} retiré à ${child?.name ?? '?'}${
-          ptx && !alreadyReversed ? ` (-${ptx.amount} pts)` : ''
+          totalReversed ? ` (-${totalReversed} pts)` : ''
         }`,
         childId,
-        ptx && !alreadyReversed ? -ptx.amount : undefined,
-        claim.id,
+        totalReversed ? -totalReversed : undefined,
+        badgeDefId,
       )
       return true
     },

@@ -348,7 +348,12 @@ export function ChildHomePage() {
     return streakDefs
       .filter((d) => d.isActive)
       .map((def) => {
-        const count = computeStreakDefCount(def, childId, { submissions, transactions, now })
+        const count = computeStreakDefCount(def, childId, {
+          submissions,
+          transactions,
+          now,
+          childCreatedAt: user?.createdAt,
+        })
         const nextTier = def.tiers.find((t) => t.days > count)
         return { def, count, nextTier }
       })

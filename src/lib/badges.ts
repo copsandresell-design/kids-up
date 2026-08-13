@@ -158,7 +158,14 @@ export function computeBadges({
         const key = `streak:${def.params.streakDefId}:${days}`
         const unlocked = hasClaim(key)
         const streakDef = streakDefs.find((d) => d.id === def.params.streakDefId)
-        const current = streakDef ? computeStreakDefCount(streakDef, childId, { submissions, transactions, now }) : 0
+        const current = streakDef
+          ? computeStreakDefCount(streakDef, childId, {
+              submissions,
+              transactions,
+              now,
+              childCreatedAt: children.find((c) => c.id === childId)?.createdAt,
+            })
+          : 0
         entries.push({
           ...base,
           unlocked,

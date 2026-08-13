@@ -227,6 +227,8 @@ export type PointsTransactionType =
   /** Retrait d'un badge débloqué par erreur (voir revokeBadgeClaim) — reprend les points crédités. */
   | 'badge_reverted'
   | 'streak_bonus'
+  /** Retrait d'un palier de série crédité par erreur (voir revokeBadgeClaim, cas streak_tier). */
+  | 'streak_reverted'
   | 'shop_redeem'
   | 'shop_refund'
   | 'points_to_money'

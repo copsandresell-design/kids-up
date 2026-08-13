@@ -106,7 +106,9 @@ function WeeklyRecapCard({
       ).length
       const streaks = streakDefs
         .filter((d) => d.isActive)
-        .map((d) => computeStreakDefCount(d, child.id, { submissions, transactions, now }))
+        .map((d) =>
+          computeStreakDefCount(d, child.id, { submissions, transactions, now, childCreatedAt: child.createdAt }),
+        )
         .filter((count) => count > 0)
       const bestStreak = Math.max(0, ...streaks)
       return { child, weekPoints, weekTasks, activeStreaks: streaks.length, bestStreak }

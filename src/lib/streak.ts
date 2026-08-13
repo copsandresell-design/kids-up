@@ -77,20 +77,33 @@ export function computeTaskStreak(
   return count
 }
 
-/** Jours consécutifs (jusqu'à aujourd'hui, garde-fou 366 jours) sans pénalité non annulée. */
+/**
+ * Jours consécutifs (jusqu'à aujourd'hui, garde-fou 366 jours) sans pénalité non annulée.
+ *
+ * `since` (optionnel, ex : date de création du profil enfant) borne le calcul : sans lui, un
+ * enfant sans aucun historique de pénalité (compte tout neuf, ou famille qui n'utilise pas les
+ * pénalités) atteint instantanément le garde-fou de 366 jours dès le premier jour d'usage — la
+ * "série" ne représente alors plus rien de réel et ne bouge plus jamais ensuite, puisqu'elle
+ * plafonne déjà. En pratique, toujours passer `since` depuis les appelants (voir
+ * computeStreakDefCount) ; l'absence de borne n'est conservée que pour la rétrocompatibilité des
+ * appels existants qui ne connaissent pas la date de création de l'enfant.
+ */
 export function computeNoPenaltyStreak(
   childId: string,
   transactions: Transaction[],
   now: Date = new Date(),
+  since?: number,
 ): number {
   const penaltyDays = new Set(
     transactions
       .filter((t) => t.childId === childId && t.type === 'penalty' && !t.cancelled)
       .map((t) => dayKey(t.createdAt)),
   )
+  const sinceDay = since !== undefined ? dayKey(since) : undefined
   let count = 0
   let cursor = now
   for (let i = 0; i < 366; i++) {
+    if (sinceDay !== undefined && dayKey(cursor) < sinceDay) break
     if (penaltyDays.has(dayKey(cursor))) break
     count++
     cursor = subDays(cursor, 1)
@@ -102,11 +115,11 @@ export function computeNoPenaltyStreak(
 export function computeStreakDefCount(
   def: StreakDef,
   childId: string,
-  ctx: { submissions: TaskSubmission[]; transactions: Transaction[]; now?: Date },
+  ctx: { submissions: TaskSubmission[]; transactions: Transaction[]; now?: Date; childCreatedAt?: number },
 ): number {
   const now = ctx.now ?? new Date()
   if (def.kind === 'global') return computeStreak(childId, ctx.submissions, now).count
-  if (def.kind === 'no_penalty') return computeNoPenaltyStreak(childId, ctx.transactions, now)
+  if (def.kind === 'no_penalty') return computeNoPenaltyStreak(childId, ctx.transactions, now, ctx.childCreatedAt)
   return def.taskId ? computeTaskStreak(childId, def.taskId, ctx.submissions, now) : 0
 }
 
