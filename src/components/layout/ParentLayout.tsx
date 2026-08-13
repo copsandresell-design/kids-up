@@ -15,7 +15,7 @@ import {
   X,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 import { cn } from '../../lib/cn'
 import { useCurrentUser, useStore } from '../../store/useStore'
 import { DemoBanner } from '../DemoBanner'
@@ -23,6 +23,7 @@ import { NotificationCenter } from '../NotificationCenter'
 import { OnboardingTour } from '../OnboardingTour'
 import { AvatarEditorModal } from '../ui/AvatarEditorModal'
 import { ChildAvatar } from '../ui/ChildAvatar'
+import { PageTransition } from '../ui/PageTransition'
 
 const BASE_LINKS = [
   { to: '/parent', label: 'Accueil', icon: Home, end: true },
@@ -138,7 +139,7 @@ export function ParentLayout() {
         <DemoBanner />
 
         <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-6 pb-24 lg:pb-8">
-          <Outlet />
+          <PageTransition />
         </main>
 
         <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 gap-1 border-t border-slate-200 bg-white/95 px-2 pb-[max(env(safe-area-inset-bottom),0.375rem)] pt-1.5 backdrop-blur lg:hidden dark:border-slate-800 dark:bg-slate-900/95">

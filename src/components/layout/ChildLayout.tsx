@@ -1,12 +1,13 @@
 import { Gift, History, Home, UserRound } from 'lucide-react'
 import { useEffect } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 import { cn } from '../../lib/cn'
 import { useCurrentUser, useStore } from '../../store/useStore'
 import { DemoBanner } from '../DemoBanner'
 import { NotificationCenter } from '../NotificationCenter'
 import { OnboardingTour } from '../OnboardingTour'
 import { ChildAvatar } from '../ui/ChildAvatar'
+import { PageTransition } from '../ui/PageTransition'
 
 const BASE_LINKS = [
   { to: '/enfant', label: 'Accueil', icon: Home, end: true },
@@ -54,7 +55,7 @@ export function ChildLayout() {
       <DemoBanner />
 
       <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-6 pb-24">
-        <Outlet />
+        <PageTransition />
       </main>
 
       <nav
