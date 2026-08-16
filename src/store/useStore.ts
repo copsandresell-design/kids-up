@@ -24,6 +24,7 @@ import type {
   Category,
   Message,
   NotificationType,
+  PenaltyCurrency,
   PenaltyRule,
   PointsTransaction,
   PointsTransactionType,
@@ -151,7 +152,7 @@ export interface Store {
   rejectSubmission: (submissionId: string, parentId: string, reason: string) => void
 
   applyPenalty: (
-    input: { childId: string; title: string; motif?: string; amount: number },
+    input: { childId: string; title: string; motif?: string; amount: number; currency?: PenaltyCurrency },
     parentId: string,
   ) => boolean
   cancelPenalty: (transactionId: string, parentId: string) => void
@@ -183,6 +184,7 @@ export interface Store {
       childId: string
       title: string
       amount: number
+      currency?: PenaltyCurrency
       recurrence: Recurrence
       active: boolean
     },
@@ -508,17 +510,20 @@ const useRealStore = create<Store>((set, get) => {
    * série correspondant (voir computeBadges).
    */
   function checkRewards(actorId: string) {
-    const { users, submissions, transactions, tasks, savingsGoals, redemptions, streakDefs, badgeDefs } = get()
+    const { users, submissions, transactions, tasks, savingsGoals, redemptions, streakDefs, badgeDefs, settings } =
+      get()
     const children = users.filter((u) => u.role === 'child' && u.isActive)
     const now = new Date()
+    const resetFloor = settings.seasonResetAt ?? 0
 
     for (const child of children) {
       for (const def of streakDefs.filter((d) => d.isActive)) {
         const count = computeStreakDefCount(def, child.id, {
           submissions,
           transactions,
+          pointsTransactions: get().pointsTransactions,
           now,
-          childCreatedAt: child.createdAt,
+          childCreatedAt: Math.max(child.createdAt, resetFloor),
         })
         for (const tier of def.tiers) {
           if (count < tier.days) continue
@@ -550,6 +555,7 @@ const useRealStore = create<Store>((set, get) => {
         children,
         badgeDefs,
         now,
+        seasonResetAt: resetFloor,
       })
       for (const badge of badges) {
         if (!badge.unlocked || badge.points <= 0) continue
@@ -579,6 +585,27 @@ const useRealStore = create<Store>((set, get) => {
       ],
     }))
     persist('transactions')
+  }
+
+  /** Équivalent points de reversePenaltyTx — voir applyPenalty (currency: 'points'). */
+  function reversePenaltyPtx(ptx: PointsTransaction, parentId: string) {
+    const reversal: PointsTransaction = {
+      id: uid(),
+      type: 'penalty_cancel',
+      childId: ptx.childId,
+      amount: -ptx.amount,
+      description: `Annulation — ${ptx.description}`,
+      relatedTo: ptx.id,
+      createdBy: parentId,
+      createdAt: Date.now(),
+    }
+    set((s) => ({
+      pointsTransactions: [
+        reversal,
+        ...s.pointsTransactions.map((p) => (p.id === ptx.id ? { ...p, cancelled: true } : p)),
+      ],
+    }))
+    persist('pointsTransactions')
   }
 
   return {
@@ -1233,7 +1260,34 @@ const useRealStore = create<Store>((set, get) => {
       )
     },
 
-    applyPenalty: ({ childId, title, motif, amount }, parentId) => {
+    // GODCLAUDE fix cohérence : les tâches ne créditent plus que des points (voir approveSubmission),
+    // mais les pénalités restaient figées en euros — money ET points restent des devises valides
+    // (voir InactivityPenaltySettings.applyMoney/applyPoints, déjà bi-devise), donc chaque pénalité
+    // manuelle/règle choisit désormais la sienne plutôt que d'imposer €.
+    applyPenalty: ({ childId, title, motif, amount, currency = 'money' }, parentId) => {
+      const description = `⚠️ ${title}${motif ? ` — ${motif}` : ''}`
+      if (currency === 'points') {
+        const { pointsTransactions } = get()
+        const debit = -Math.abs(amount)
+        if (computePoints(pointsTransactions, childId) + debit < 0) {
+          get().toast('Le solde de points passerait en négatif.', 'error')
+          return false
+        }
+        const ptx: PointsTransaction = {
+          id: uid(),
+          childId,
+          type: 'penalty',
+          amount: debit,
+          description,
+          createdBy: parentId,
+          createdAt: Date.now(),
+        }
+        set((s) => ({ pointsTransactions: [ptx, ...s.pointsTransactions] }))
+        pushLog('penalty_applied', parentId, `« ${title} »${motif ? ` — ${motif}` : ''}`, childId, debit, ptx.id)
+        persist('pointsTransactions')
+        notify(childId, 'penalty', 'Pénalité appliquée', `${title} · ${Math.abs(debit)} pts`, '⚠️', '/enfant/historique')
+        return true
+      }
       const { transactions, settings } = get()
       const debit = -Math.abs(amount)
       if (computeBalance(transactions, childId) + debit < settings.minBalance) {
@@ -1248,7 +1302,7 @@ const useRealStore = create<Store>((set, get) => {
         type: 'penalty',
         childId,
         amount: debit,
-        description: `⚠️ ${title}${motif ? ` — ${motif}` : ''}`,
+        description,
         createdBy: parentId,
         createdAt: Date.now(),
       }
@@ -1267,28 +1321,55 @@ const useRealStore = create<Store>((set, get) => {
     },
 
     // Undo rapide dans la minute suivante (bouton "Annuler" sur la page Pénalités) : fenêtre de 24h.
+    // Cherche dans les deux registres (€ puis points) : l'id est unique quelle que soit la devise.
     cancelPenalty: (transactionId, parentId) => {
       const tx = get().transactions.find((t) => t.id === transactionId)
-      if (!tx || tx.type !== 'penalty' || tx.cancelled) return
-      if (Date.now() - tx.createdAt > PENALTY_CANCEL_WINDOW) {
+      if (tx) {
+        if (tx.type !== 'penalty' || tx.cancelled) return
+        if (Date.now() - tx.createdAt > PENALTY_CANCEL_WINDOW) {
+          get().toast('Trop tard : une pénalité ne peut être annulée que sous 24 h.', 'error')
+          return
+        }
+        reversePenaltyTx(tx, parentId)
+        pushLog('penalty_cancelled', parentId, tx.description, tx.childId, -tx.amount, tx.id)
+        return
+      }
+      const ptx = get().pointsTransactions.find((p) => p.id === transactionId)
+      if (!ptx || ptx.type !== 'penalty' || ptx.cancelled) return
+      if (Date.now() - ptx.createdAt > PENALTY_CANCEL_WINDOW) {
         get().toast('Trop tard : une pénalité ne peut être annulée que sous 24 h.', 'error')
         return
       }
-      reversePenaltyTx(tx, parentId)
-      pushLog('penalty_cancelled', parentId, tx.description, tx.childId, -tx.amount, tx.id)
+      reversePenaltyPtx(ptx, parentId)
+      pushLog('penalty_cancelled', parentId, ptx.description, ptx.childId, -ptx.amount, ptx.id)
     },
 
     // Contrôle parental étendu (page Journal / Pénalités) : pas de limite de temps, correction explicite.
     deletePenaltyTransaction: (transactionId, parentId) => {
       const tx = get().transactions.find((t) => t.id === transactionId)
-      if (!tx || tx.type !== 'penalty' || tx.cancelled) return false
-      reversePenaltyTx(tx, parentId)
-      pushLog('penalty_deleted', parentId, tx.description, tx.childId, -tx.amount, tx.id)
+      if (tx) {
+        if (tx.type !== 'penalty' || tx.cancelled) return false
+        reversePenaltyTx(tx, parentId)
+        pushLog('penalty_deleted', parentId, tx.description, tx.childId, -tx.amount, tx.id)
+        notify(
+          tx.childId,
+          'penalty',
+          'Pénalité supprimée',
+          `« ${tx.description.replace('⚠️ ', '')} » a été annulée par un parent.`,
+          '✅',
+          '/enfant/historique',
+        )
+        return true
+      }
+      const ptx = get().pointsTransactions.find((p) => p.id === transactionId)
+      if (!ptx || ptx.type !== 'penalty' || ptx.cancelled) return false
+      reversePenaltyPtx(ptx, parentId)
+      pushLog('penalty_deleted', parentId, ptx.description, ptx.childId, -ptx.amount, ptx.id)
       notify(
-        tx.childId,
+        ptx.childId,
         'penalty',
         'Pénalité supprimée',
-        `« ${tx.description.replace('⚠️ ', '')} » a été annulée par un parent.`,
+        `« ${ptx.description.replace('⚠️ ', '')} » a été annulée par un parent.`,
         '✅',
         '/enfant/historique',
       )
@@ -1297,11 +1378,21 @@ const useRealStore = create<Store>((set, get) => {
 
     editPenaltyTransaction: (transactionId, patch, parentId) => {
       const tx = get().transactions.find((t) => t.id === transactionId)
-      if (!tx || tx.type !== 'penalty' || tx.cancelled) return false
-      reversePenaltyTx(tx, parentId)
-      pushLog('penalty_edited', parentId, `${tx.description} → « ${patch.title} »`, tx.childId, undefined, tx.id)
+      if (tx) {
+        if (tx.type !== 'penalty' || tx.cancelled) return false
+        reversePenaltyTx(tx, parentId)
+        pushLog('penalty_edited', parentId, `${tx.description} → « ${patch.title} »`, tx.childId, undefined, tx.id)
+        return get().applyPenalty(
+          { childId: tx.childId, title: patch.title, motif: patch.motif, amount: patch.amount, currency: 'money' },
+          parentId,
+        )
+      }
+      const ptx = get().pointsTransactions.find((p) => p.id === transactionId)
+      if (!ptx || ptx.type !== 'penalty' || ptx.cancelled) return false
+      reversePenaltyPtx(ptx, parentId)
+      pushLog('penalty_edited', parentId, `${ptx.description} → « ${patch.title} »`, ptx.childId, undefined, ptx.id)
       return get().applyPenalty(
-        { childId: tx.childId, title: patch.title, motif: patch.motif, amount: patch.amount },
+        { childId: ptx.childId, title: patch.title, motif: patch.motif, amount: patch.amount, currency: 'points' },
         parentId,
       )
     },
@@ -1335,6 +1426,11 @@ const useRealStore = create<Store>((set, get) => {
         return { ...item, stock: item.stock + consumed }
       })
 
+      // seasonResetAt : plancher pour les calculs "depuis quand" (inactivité, série sans
+      // pénalité) qui s'appuient sur cet historique désormais vide — sans ça, ils retombent sur
+      // childCreatedAt (potentiellement très ancien) juste après ce reset. Voir Settings.seasonResetAt.
+      const nextSettings = { ...get().settings, seasonResetAt: Date.now() }
+
       set({
         transactions: [],
         submissions: [],
@@ -1343,6 +1439,7 @@ const useRealStore = create<Store>((set, get) => {
         redemptions: [],
         savingsGoals: [],
         shopItems: restoredShopItems,
+        settings: nextSettings,
       })
       save('transactions', [])
       save('submissions', [])
@@ -1351,6 +1448,8 @@ const useRealStore = create<Store>((set, get) => {
       save('redemptions', [])
       save('savingsGoals', [])
       save('shopItems', restoredShopItems)
+      save('settings', nextSettings)
+      pushRecord('sync_settings', 'main', nextSettings)
 
       // persist() republie ce qui reste mais ne supprime jamais côté Supabase : ces tableaux
       // étant désormais vides, il faut explicitement effacer chaque ancien enregistrement.

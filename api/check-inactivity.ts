@@ -45,6 +45,8 @@ interface PenaltyRule {
   childId: string
   title: string
   amount: number
+  /** Absent = 'money' (règles créées avant l'ajout des pénalités en points). */
+  currency?: 'points' | 'money'
   recurrence: Recurrence
   active: boolean
 }
@@ -61,6 +63,11 @@ interface InactivityPenaltySettings {
 interface Settings {
   features: { inactivityPenalties: boolean; recurringPenalties: boolean }
   inactivityPenalty: InactivityPenaltySettings
+  /** Horodatage du dernier resetSeason — voir src/types.ts pour l'explication complète. Plancher
+   *  pour lastActivity ci-dessous : sans lui, un reset (qui vide sync_submissions) fait retomber
+   *  lastActivity sur child.createdAt, potentiellement très ancien, et déclenche une pénalité
+   *  d'inactivité massive et absurde dès le lendemain d'une remise à zéro. */
+  seasonResetAt?: number
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -152,7 +159,7 @@ export default async function handler(req: any, res: any) {
     const ptx = {
       id: uid(),
       childId,
-      type: 'manual_adjustment',
+      type: 'penalty',
       amount: -Math.abs(amount),
       description,
       createdBy: 'system',
@@ -161,6 +168,7 @@ export default async function handler(req: any, res: any) {
     await supabase
       .from('sync_points_transactions')
       .upsert({ id: ptx.id, family_id: familyId, data: ptx, updated_at: new Date().toISOString() })
+    return ptx
   }
 
   async function sendPush(userId: string, title: string, body: string, icon: string, link: string) {
@@ -218,7 +226,7 @@ export default async function handler(req: any, res: any) {
         const approvedDates = submissions
           .filter((s) => s.childId === child.id && s.status === 'approved' && s.reviewedAt)
           .map((s) => s.reviewedAt!)
-        const lastActivity = approvedDates.length > 0 ? Math.max(...approvedDates) : child.createdAt
+        const lastActivity = Math.max(child.createdAt, settings.seasonResetAt ?? 0, ...approvedDates)
         const daysSince = Math.floor((now.getTime() - lastActivity) / DAY_MS)
 
         if (daysSince >= cfg.thresholdDays) {
@@ -272,13 +280,19 @@ export default async function handler(req: any, res: any) {
         if (await alreadyRan(familyId, key)) continue
 
         const description = `⚠️ ${rule.title} (règle automatique)`
-        const tx = await insertTransaction(familyId, rule.childId, rule.amount, description)
+        // GODCLAUDE fix cohérence : une règle peut désormais retirer des € ou des points (voir
+        // PenaltyRule.currency côté src/types.ts) — même logique que la pénalité manuelle
+        // (applyPenalty) et que les pénalités d'inactivité juste au-dessus.
+        const applied =
+          rule.currency === 'points'
+            ? await insertPointsTransaction(familyId, rule.childId, rule.amount, description)
+            : await insertTransaction(familyId, rule.childId, rule.amount, description)
         await pushLog(familyId, {
           action: 'penalty_rule_auto_applied',
           actorId: 'system',
           subjectId: rule.childId,
-          relatedId: tx.id,
-          amount: tx.amount,
+          relatedId: applied.id,
+          amount: applied.amount,
           details: description,
         })
         await markRan(familyId, key)

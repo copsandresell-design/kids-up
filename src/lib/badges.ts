@@ -42,6 +42,8 @@ interface BadgeContext {
   children: User[]
   badgeDefs?: BadgeDef[]
   now?: Date
+  /** Settings.seasonResetAt — voir computeStreakDefCount, plancher après une remise à zéro. */
+  seasonResetAt?: number
 }
 
 /**
@@ -64,6 +66,7 @@ export function computeBadges({
   children,
   badgeDefs = DEFAULT_BADGE_DEFS,
   now = new Date(),
+  seasonResetAt,
 }: BadgeContext): BadgeState[] {
   const mine = submissions.filter((s) => s.childId === childId)
   const approved = mine.filter((s) => s.status === 'approved')
@@ -103,11 +106,18 @@ export function computeBadges({
   const achievedGoalsCount = savingsGoals.filter((g) => g.childId === childId && g.achievedAt).length
   const hasRedeemed = redemptions.some((r) => r.childId === childId)
 
+  // Une pénalité vit en € (transactions) OU en points (pointsTransactions), jamais les deux à la
+  // fois (voir applyPenalty côté useStore) — il faut regarder les deux registres pour ne pas
+  // ignorer les familles qui pénalisent exclusivement en points.
   const noPenaltyInLastDays = (days: number) => {
     const cutoff = now.getTime() - days * DAY
-    return !transactions.some(
+    const recentMoneyPenalty = transactions.some(
       (t) => t.childId === childId && t.type === 'penalty' && !t.cancelled && t.createdAt >= cutoff,
     )
+    const recentPointsPenalty = pointsTransactions.some(
+      (p) => p.childId === childId && p.type === 'penalty' && !p.cancelled && p.createdAt >= cutoff,
+    )
+    return !recentMoneyPenalty && !recentPointsPenalty
   }
 
   // Badge collectif : un jour où tous les enfants actifs ont chacun validé au moins une tâche.
@@ -162,8 +172,9 @@ export function computeBadges({
           ? computeStreakDefCount(streakDef, childId, {
               submissions,
               transactions,
+              pointsTransactions,
               now,
-              childCreatedAt: children.find((c) => c.id === childId)?.createdAt,
+              childCreatedAt: Math.max(children.find((c) => c.id === childId)?.createdAt ?? 0, seasonResetAt ?? 0),
             })
           : 0
         entries.push({

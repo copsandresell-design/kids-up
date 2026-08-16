@@ -88,12 +88,14 @@ function WeeklyRecapCard({
   submissions,
   transactions,
   streakDefs,
+  seasonResetAt,
 }: {
   children: User[]
   pointsTransactions: PointsTransaction[]
   submissions: TaskSubmission[]
   transactions: Transaction[]
   streakDefs: StreakDef[]
+  seasonResetAt?: number
 }) {
   const recaps = useMemo(() => {
     const now = new Date()
@@ -107,7 +109,13 @@ function WeeklyRecapCard({
       const streaks = streakDefs
         .filter((d) => d.isActive)
         .map((d) =>
-          computeStreakDefCount(d, child.id, { submissions, transactions, now, childCreatedAt: child.createdAt }),
+          computeStreakDefCount(d, child.id, {
+            submissions,
+            transactions,
+            pointsTransactions,
+            now,
+            childCreatedAt: Math.max(child.createdAt, seasonResetAt ?? 0),
+          }),
         )
         .filter((count) => count > 0)
       const bestStreak = Math.max(0, ...streaks)
@@ -360,6 +368,7 @@ export function OverviewPage() {
           submissions={submissions}
           transactions={transactions}
           streakDefs={streakDefs}
+          seasonResetAt={settings.seasonResetAt}
         />
       )}
 

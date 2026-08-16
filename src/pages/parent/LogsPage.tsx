@@ -21,6 +21,7 @@ function undoableTarget(
   log: AuditLog,
   submissions: ReturnType<typeof useStore.getState>['submissions'],
   transactions: ReturnType<typeof useStore.getState>['transactions'],
+  pointsTransactions: ReturnType<typeof useStore.getState>['pointsTransactions'],
 ): 'approval' | 'penalty' | null {
   if (!log.relatedId) return null
   if (log.action === 'submission_approved') {
@@ -28,10 +29,38 @@ function undoableTarget(
     return sub?.status === 'approved' ? 'approval' : null
   }
   if (log.action === 'penalty_applied') {
+    // Une pénalité vit en € OU en points (voir applyPenalty) — chercher dans les deux registres.
     const tx = transactions.find((t) => t.id === log.relatedId)
-    return tx && !tx.cancelled ? 'penalty' : null
+    if (tx) return !tx.cancelled ? 'penalty' : null
+    const ptx = pointsTransactions.find((p) => p.id === log.relatedId)
+    return ptx && !ptx.cancelled ? 'penalty' : null
   }
   return null
+}
+
+/**
+ * Certaines actions du Journal journalisent un montant (`log.amount`) qui peut être en
+ * centimes (€) ou en points selon l'action — voire selon la transaction sous-jacente pour les
+ * pénalités, qui existent dans les deux devises. Sans cette résolution, la colonne "Montant"
+ * affichait par ex. un don de "50 pts" comme "0,50 €".
+ */
+const MONEY_ONLY_LOG_ACTIONS = new Set(['balance_reset', 'points_converted'])
+const DUAL_CURRENCY_LOG_ACTIONS = new Set(['penalty_applied', 'penalty_cancelled', 'penalty_deleted'])
+
+function logAmountCurrency(
+  log: AuditLog,
+  transactions: ReturnType<typeof useStore.getState>['transactions'],
+  pointsTransactions: ReturnType<typeof useStore.getState>['pointsTransactions'],
+): 'money' | 'points' | undefined {
+  if (log.amount === undefined) return undefined
+  if (MONEY_ONLY_LOG_ACTIONS.has(log.action)) return 'money'
+  if (DUAL_CURRENCY_LOG_ACTIONS.has(log.action)) {
+    if (log.relatedId && transactions.some((t) => t.id === log.relatedId)) return 'money'
+    if (log.relatedId && pointsTransactions.some((p) => p.id === log.relatedId)) return 'points'
+    return undefined
+  }
+  // Toutes les autres actions journalisant un montant (dons, prêts, ajustements, badge retiré…) sont en points.
+  return 'points'
 }
 
 export function LogsPage() {
@@ -159,7 +188,8 @@ export function LogsPage() {
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
             {filtered.slice(0, 200).map((log) => {
-              const undoTarget = undoableTarget(log, submissions, transactions)
+              const undoTarget = undoableTarget(log, submissions, transactions, pointsTransactions)
+              const amountCurrency = logAmountCurrency(log, transactions, pointsTransactions)
               return (
                 <tr key={log.id}>
                   <td className="whitespace-nowrap px-4 py-2.5 tabular-nums text-slate-500 dark:text-slate-400">
@@ -169,7 +199,12 @@ export function LogsPage() {
                   <td className="px-4 py-2.5">{actionLabel(log.action)}</td>
                   <td className="px-4 py-2.5">{nameOf(log.subjectId)}</td>
                   <td className="px-4 py-2.5 text-right">
-                    {log.amount !== undefined && <Amount cents={log.amount} className="text-sm" />}
+                    {log.amount !== undefined &&
+                      (amountCurrency === 'points' ? (
+                        <Amount points={log.amount} className="text-sm" />
+                      ) : (
+                        <Amount cents={log.amount} className="text-sm" />
+                      ))}
                   </td>
                   <td className="max-w-64 truncate px-4 py-2.5 text-slate-600 dark:text-slate-300">{log.details}</td>
                   <td className="whitespace-nowrap px-4 py-2.5 text-right">
@@ -210,7 +245,7 @@ export function LogsPage() {
         danger
         onConfirm={() => {
           if (!undoing || !user) return
-          const target = undoableTarget(undoing, submissions, transactions)
+          const target = undoableTarget(undoing, submissions, transactions, pointsTransactions)
           if (target === 'approval' && undoing.relatedId) {
             revertApproval(undoing.relatedId, 'pending', user.id)
             toast('Validation annulée.')

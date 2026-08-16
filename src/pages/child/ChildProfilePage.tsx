@@ -225,10 +225,11 @@ export function ChildProfilePage() {
             streakDefs,
             badgeDefs,
             children,
+            seasonResetAt: settings.seasonResetAt,
           })
         : [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [user, submissions, pointsTransactions, transactions, tasks, savingsGoals, redemptions, rewardClaims, streakDefs, badgeDefs, users],
+    [user, submissions, pointsTransactions, transactions, tasks, savingsGoals, redemptions, rewardClaims, streakDefs, badgeDefs, users, settings.seasonResetAt],
   )
 
   const lifetimeRank = useMemo(() => {

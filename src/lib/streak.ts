@@ -1,5 +1,5 @@
 import { format, subDays } from 'date-fns'
-import type { StreakDef, StreakTier, TaskSubmission, Transaction } from '../types'
+import type { PointsTransaction, StreakDef, StreakTier, TaskSubmission, Transaction } from '../types'
 
 export interface Streak {
   count: number
@@ -93,12 +93,18 @@ export function computeNoPenaltyStreak(
   transactions: Transaction[],
   now: Date = new Date(),
   since?: number,
+  // Une pénalité vit en € OU en points, jamais les deux (voir applyPenalty) — les deux registres
+  // doivent casser la série, sans quoi une famille qui pénalise en points la verrait ne jamais casser.
+  pointsTransactions: PointsTransaction[] = [],
 ): number {
-  const penaltyDays = new Set(
-    transactions
+  const penaltyDays = new Set([
+    ...transactions
       .filter((t) => t.childId === childId && t.type === 'penalty' && !t.cancelled)
       .map((t) => dayKey(t.createdAt)),
-  )
+    ...pointsTransactions
+      .filter((p) => p.childId === childId && p.type === 'penalty' && !p.cancelled)
+      .map((p) => dayKey(p.createdAt)),
+  ])
   const sinceDay = since !== undefined ? dayKey(since) : undefined
   let count = 0
   let cursor = now
@@ -115,11 +121,19 @@ export function computeNoPenaltyStreak(
 export function computeStreakDefCount(
   def: StreakDef,
   childId: string,
-  ctx: { submissions: TaskSubmission[]; transactions: Transaction[]; now?: Date; childCreatedAt?: number },
+  ctx: {
+    submissions: TaskSubmission[]
+    transactions: Transaction[]
+    pointsTransactions?: PointsTransaction[]
+    now?: Date
+    childCreatedAt?: number
+  },
 ): number {
   const now = ctx.now ?? new Date()
   if (def.kind === 'global') return computeStreak(childId, ctx.submissions, now).count
-  if (def.kind === 'no_penalty') return computeNoPenaltyStreak(childId, ctx.transactions, now, ctx.childCreatedAt)
+  if (def.kind === 'no_penalty') {
+    return computeNoPenaltyStreak(childId, ctx.transactions, now, ctx.childCreatedAt, ctx.pointsTransactions)
+  }
   return def.taskId ? computeTaskStreak(childId, def.taskId, ctx.submissions, now) : 0
 }
 

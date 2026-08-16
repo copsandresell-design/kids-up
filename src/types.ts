@@ -200,6 +200,14 @@ export interface Settings {
   /** Multiplicateurs de points appliqués au gain d'une tâche selon le groupe d'âge (1 = neutre). */
   pointsMultiplierPetit: number
   pointsMultiplierGrand: number
+  /**
+   * Horodatage du dernier `resetSeason` (Réglages → Réinitialiser la saison), absent si jamais
+   * réinitialisé. Sert de plancher à tout calcul « depuis quand » basé sur l'historique remis à
+   * zéro (inactivité, série "sans pénalité") : sans lui, ces calculs retombent sur la date de
+   * création du compte enfant — potentiellement très ancienne — et affichent des durées absurdes
+   * juste après une remise à zéro (ex : « 22 jours d'inactivité » deux jours après un reset).
+   */
+  seasonResetAt?: number
 }
 
 /** Objectif d'épargne fixé par un enfant (ex: un jeu vidéo à 30€). */
@@ -251,6 +259,9 @@ export type PointsTransactionType =
   | 'shop_refund'
   | 'points_to_money'
   | 'manual_adjustment'
+  /** Pénalité en points (manuelle ou règle récurrente) — voir applyPenalty/PenaltyRule. */
+  | 'penalty'
+  | 'penalty_cancel'
   /** Transfert entre enfants (voir lib/loans.ts) : don (aucun suivi de remboursement)… */
   | 'points_gift_sent'
   | 'points_gift_received'
@@ -270,6 +281,8 @@ export interface PointsTransaction {
   relatedTo?: string
   createdBy: string
   createdAt: number
+  /** Pénalité annulée (voir cancelPenalty/deletePenaltyTransaction) — même convention que Transaction.cancelled. */
+  cancelled?: boolean
 }
 
 /** Marqueur d'idempotence : empêche de recréditer deux fois le même badge/palier de série. */
@@ -360,12 +373,18 @@ export interface RankDef {
   createdAt: number
 }
 
+/** Monnaie retirée par une pénalité (manuelle ou règle récurrente). Absent = 'money' (valeur des
+ *  pénalités/règles créées avant l'ajout des pénalités en points — rétrocompatibilité). */
+export type PenaltyCurrency = 'points' | 'money'
+
 /** Règle de pénalité récurrente créée par un parent (ex : chambre pas rangée le dimanche soir). */
 export interface PenaltyRule {
   id: string
   childId: string
   title: string
+  /** En centimes si currency = 'money', en points si currency = 'points'. */
   amount: number
+  currency?: PenaltyCurrency
   /** Fréquences pertinentes pour une règle sans historique de soumissions : quotidienne, hebdo ou mensuelle. */
   recurrence: Recurrence
   active: boolean

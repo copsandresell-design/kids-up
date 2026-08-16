@@ -272,6 +272,7 @@ export function ChildHomePage() {
       streakDefs,
       badgeDefs,
       children,
+      seasonResetAt: settings.seasonResetAt,
     }).filter((b) => b.unlocked)
     void (async () => {
       const seen = await db.getItem<string[]>(key)
@@ -286,7 +287,7 @@ export function ChildHomePage() {
       await db.setItem(key, unlocked.map((b) => b.id))
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [childId, submissions, pointsTransactions, transactions, tasks, savingsGoals, redemptions, rewardClaims, streakDefs, badgeDefs, users])
+  }, [childId, submissions, pointsTransactions, transactions, tasks, savingsGoals, redemptions, rewardClaims, streakDefs, badgeDefs, users, settings.seasonResetAt])
 
   // Détection d'un nouveau rang (progression à vie, ne redescend jamais).
   useEffect(() => {
@@ -334,8 +335,9 @@ export function ChildHomePage() {
       streakDefs,
       badgeDefs,
       children,
+      seasonResetAt: settings.seasonResetAt,
     })
-  }, [childId, submissions, pointsTransactions, transactions, tasks, savingsGoals, redemptions, rewardClaims, streakDefs, badgeDefs, users])
+  }, [childId, submissions, pointsTransactions, transactions, tasks, savingsGoals, redemptions, rewardClaims, streakDefs, badgeDefs, users, settings.seasonResetAt])
 
   const rank = useMemo(() => {
     if (!childId || rankDefs.length === 0) return null
@@ -351,14 +353,15 @@ export function ChildHomePage() {
         const count = computeStreakDefCount(def, childId, {
           submissions,
           transactions,
+          pointsTransactions,
           now,
-          childCreatedAt: user?.createdAt,
+          childCreatedAt: Math.max(user?.createdAt ?? 0, settings.seasonResetAt ?? 0),
         })
         const nextTier = def.tiers.find((t) => t.days > count)
         return { def, count, nextTier }
       })
       .filter((s) => s.count > 0)
-  }, [childId, streakDefs, submissions, transactions])
+  }, [childId, streakDefs, submissions, transactions, pointsTransactions, user, settings.seasonResetAt])
 
   if (!user || !childId || !streak || !level) return null
 

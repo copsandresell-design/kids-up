@@ -13,7 +13,19 @@ import { Switch } from '../../components/ui/Switch'
 import { centsToEuroInput, euroToCents, formatDateTime, formatEuro } from '../../lib/format'
 import { DAYS_FR } from '../../lib/recurrence'
 import { PENALTY_CANCEL_WINDOW, useCurrentUser, useStore } from '../../store/useStore'
-import type { Frequency, PenaltyRule, Transaction } from '../../types'
+import type { Frequency, PenaltyCurrency, PenaltyRule } from '../../types'
+
+/** Vue unifiée d'une pénalité, qu'elle vive dans `transactions` (€) ou `pointsTransactions` (points) —
+ *  voir applyPenalty : les deux devises sont valides, une pénalité donnée n'est jamais que l'une des deux. */
+interface PenaltyEntry {
+  id: string
+  childId: string
+  description: string
+  amount: number
+  currency: PenaltyCurrency
+  cancelled?: boolean
+  createdAt: number
+}
 
 /** Fréquences pertinentes pour une règle sans historique de soumissions (pas de notion "2×/semaine" ici). */
 const RULE_FREQUENCIES: { value: Frequency; label: string }[] = [
@@ -35,6 +47,21 @@ function describeRuleRecurrence(rule: PenaltyRule): string {
   }
 }
 
+/** Bascule Points / € — mêmes deux devises que les pénalités d'inactivité (Réglages), même style
+ *  de toggle à deux boutons que "Ajouter/Retirer" des points (voir ChildrenPage.AdjustPointsModal). */
+function CurrencyToggle({ value, onChange }: { value: PenaltyCurrency; onChange: (c: PenaltyCurrency) => void }) {
+  return (
+    <div className="flex gap-2">
+      <Button variant={value === 'points' ? 'primary' : 'soft'} className="flex-1" onClick={() => onChange('points')}>
+        Points
+      </Button>
+      <Button variant={value === 'money' ? 'primary' : 'soft'} className="flex-1" onClick={() => onChange('money')}>
+        €
+      </Button>
+    </div>
+  )
+}
+
 function PenaltyRuleModal({
   rule,
   defaultChildId,
@@ -49,16 +76,21 @@ function PenaltyRuleModal({
   const savePenaltyRule = useStore((s) => s.savePenaltyRule)
   const toast = useStore((s) => s.toast)
 
+  // Règle existante sans currency (créée avant l'ajout des points) : 'money', son seul sens historique.
+  // Nouvelle règle : 'points' par défaut, la devise que la famille utilise désormais au quotidien.
+  const [currency, setCurrency] = useState<PenaltyCurrency>(rule ? (rule.currency ?? 'money') : 'points')
   const [childId, setChildId] = useState(rule?.childId ?? defaultChildId)
   const [title, setTitle] = useState(rule?.title ?? '')
-  const [amount, setAmount] = useState(rule ? centsToEuroInput(rule.amount) : '1.00')
+  const [amount, setAmount] = useState(
+    rule ? (rule.currency === 'points' ? String(rule.amount) : centsToEuroInput(rule.amount)) : '10',
+  )
   const [frequency, setFrequency] = useState<Frequency>(rule?.recurrence.frequency ?? 'weekly')
   const [dayOfWeek, setDayOfWeek] = useState(rule?.recurrence.dayOfWeek ?? 6)
   const [dayOfMonth, setDayOfMonth] = useState(rule?.recurrence.dayOfMonth ?? 1)
 
   if (!user) return null
-  const cents = euroToCents(amount)
-  const valid = title.trim() && cents > 0 && childId
+  const resolvedAmount = currency === 'points' ? Math.round(Number(amount)) : euroToCents(amount)
+  const valid = title.trim() && resolvedAmount > 0 && childId
 
   function submit() {
     savePenaltyRule(
@@ -66,7 +98,8 @@ function PenaltyRuleModal({
         id: rule?.id,
         childId,
         title: title.trim(),
-        amount: cents,
+        amount: resolvedAmount,
+        currency,
         recurrence: {
           frequency,
           dayOfWeek: frequency === 'weekly' ? dayOfWeek : undefined,
@@ -101,13 +134,16 @@ function PenaltyRuleModal({
             autoFocus
           />
         </Field>
-        <Field label="Montant (€)">
+        <Field label="Devise">
+          <CurrencyToggle value={currency} onChange={setCurrency} />
+        </Field>
+        <Field label={currency === 'points' ? 'Montant retiré (points)' : 'Montant (€)'}>
           <input
             className={inputCls}
             type="number"
-            min="0.01"
-            step="0.01"
-            inputMode="decimal"
+            min={currency === 'points' ? '1' : '0.01'}
+            step={currency === 'points' ? '1' : '0.01'}
+            inputMode={currency === 'points' ? 'numeric' : 'decimal'}
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
           />
@@ -153,23 +189,25 @@ function PenaltyRuleModal({
 }
 
 function EditPenaltyModal({
-  tx,
+  entry,
   onClose,
 }: {
-  tx: Transaction
+  entry: PenaltyEntry
   onClose: () => void
 }) {
   const user = useCurrentUser()
   const editPenaltyTransaction = useStore((s) => s.editPenaltyTransaction)
   const toast = useStore((s) => s.toast)
-  const parts = tx.description.replace('⚠️ ', '').split(' — ')
+  const parts = entry.description.replace('⚠️ ', '').split(' — ')
   const [title, setTitle] = useState(parts[0] ?? '')
   const [motif, setMotif] = useState(parts.slice(1).join(' — '))
-  const [amount, setAmount] = useState(centsToEuroInput(Math.abs(tx.amount)))
+  const [amount, setAmount] = useState(
+    entry.currency === 'points' ? String(Math.abs(entry.amount)) : centsToEuroInput(Math.abs(entry.amount)),
+  )
 
   if (!user) return null
-  const cents = euroToCents(amount)
-  const valid = title.trim() && cents > 0
+  const resolvedAmount = entry.currency === 'points' ? Math.round(Number(amount)) : euroToCents(amount)
+  const valid = title.trim() && resolvedAmount > 0
 
   return (
     <Modal open onClose={onClose} title="Modifier la pénalité">
@@ -180,13 +218,13 @@ function EditPenaltyModal({
         <Field label="Motif (optionnel)">
           <input className={inputCls} value={motif} onChange={(e) => setMotif(e.target.value)} />
         </Field>
-        <Field label="Montant retiré (€)">
+        <Field label={entry.currency === 'points' ? 'Montant retiré (points)' : 'Montant retiré (€)'}>
           <input
             className={inputCls}
             type="number"
-            min="0.01"
-            step="0.01"
-            inputMode="decimal"
+            min={entry.currency === 'points' ? '1' : '0.01'}
+            step={entry.currency === 'points' ? '1' : '0.01'}
+            inputMode={entry.currency === 'points' ? 'numeric' : 'decimal'}
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
           />
@@ -199,8 +237,8 @@ function EditPenaltyModal({
             disabled={!valid}
             onClick={() => {
               const ok = editPenaltyTransaction(
-                tx.id,
-                { title: title.trim(), motif: motif.trim() || undefined, amount: cents },
+                entry.id,
+                { title: title.trim(), motif: motif.trim() || undefined, amount: resolvedAmount },
                 user.id,
               )
               toast(ok ? 'Pénalité modifiée.' : 'Impossible de modifier cette pénalité.', ok ? 'success' : 'error')
@@ -220,6 +258,7 @@ export function PenaltiesPage() {
   const children = useStore((s) => s.users).filter((u) => u.role === 'child' && u.isActive)
   const users = useStore((s) => s.users)
   const transactions = useStore((s) => s.transactions)
+  const pointsTransactions = useStore((s) => s.pointsTransactions)
   const settings = useStore((s) => s.settings)
   const penaltyRules = useStore((s) => s.penaltyRules)
   const applyPenalty = useStore((s) => s.applyPenalty)
@@ -229,28 +268,44 @@ export function PenaltiesPage() {
   const deletePenaltyRule = useStore((s) => s.deletePenaltyRule)
   const toast = useStore((s) => s.toast)
 
+  const [currency, setCurrency] = useState<PenaltyCurrency>('points')
   const [childId, setChildId] = useState(children[0]?.id ?? '')
   const [title, setTitle] = useState('')
   const [motif, setMotif] = useState('')
-  const [amount, setAmount] = useState('1.00')
+  const [amount, setAmount] = useState('10')
   const [confirming, setConfirming] = useState(false)
-  const [editing, setEditing] = useState<Transaction | null>(null)
-  const [deleting, setDeleting] = useState<Transaction | null>(null)
+  const [editing, setEditing] = useState<PenaltyEntry | null>(null)
+  const [deleting, setDeleting] = useState<PenaltyEntry | null>(null)
   const [editingRule, setEditingRule] = useState<PenaltyRule | 'new' | null>(null)
   const [deletingRule, setDeletingRule] = useState<PenaltyRule | null>(null)
 
   if (!user) return null
 
-  const penalties = transactions.filter((t) => t.type === 'penalty')
+  // Historique unifié : une pénalité vit soit dans transactions (€), soit dans pointsTransactions
+  // (points), jamais les deux — voir applyPenalty. Fusionnées ici pour un seul flux chronologique.
+  const penalties: PenaltyEntry[] = [
+    ...transactions
+      .filter((t) => t.type === 'penalty')
+      .map((t) => ({ ...t, currency: 'money' as const })),
+    ...pointsTransactions
+      .filter((p) => p.type === 'penalty')
+      .map((p) => ({ ...p, currency: 'points' as const })),
+  ].sort((a, b) => b.createdAt - a.createdAt)
+
   const child = children.find((c) => c.id === childId)
-  const cents = euroToCents(amount)
-  const valid = child && title.trim() && cents > 0
+  const resolvedAmount = currency === 'points' ? Math.round(Number(amount)) : euroToCents(amount)
+  const valid = child && title.trim() && resolvedAmount > 0
 
   function confirmApply() {
     if (!valid || !child) return
-    const ok = applyPenalty({ childId: child.id, title: title.trim(), motif: motif.trim() || undefined, amount: cents }, user!.id)
+    const ok = applyPenalty(
+      { childId: child.id, title: title.trim(), motif: motif.trim() || undefined, amount: resolvedAmount, currency },
+      user!.id,
+    )
     if (ok) {
-      toast(`Pénalité de ${formatEuro(cents)} appliquée à ${child.name}.`)
+      toast(
+        `Pénalité de ${currency === 'points' ? `${resolvedAmount} pts` : formatEuro(resolvedAmount)} appliquée à ${child.name}.`,
+      )
       setTitle('')
       setMotif('')
     }
@@ -275,18 +330,21 @@ export function PenaltiesPage() {
               ))}
             </select>
           </Field>
-          <Field label="Montant retiré (€)">
-            <input
-              className={inputCls}
-              type="number"
-              min="0.01"
-              step="0.01"
-              inputMode="decimal"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-            />
+          <Field label="Devise">
+            <CurrencyToggle value={currency} onChange={setCurrency} />
           </Field>
         </div>
+        <Field label={currency === 'points' ? 'Montant retiré (points)' : 'Montant retiré (€)'}>
+          <input
+            className={inputCls}
+            type="number"
+            min={currency === 'points' ? '1' : '0.01'}
+            step={currency === 'points' ? '1' : '0.01'}
+            inputMode={currency === 'points' ? 'numeric' : 'decimal'}
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+        </Field>
         <Field label="Titre *">
           <input
             className={inputCls}
@@ -325,6 +383,7 @@ export function PenaltiesPage() {
           <div className="space-y-3">
             {penaltyRules.map((rule) => {
               const ruleChild = users.find((u) => u.id === rule.childId)
+              const ruleCurrency: PenaltyCurrency = rule.currency ?? 'money'
               return (
                 <Card key={rule.id} className="flex items-center gap-3 p-4">
                   {ruleChild && <ChildAvatar user={ruleChild} size="sm" />}
@@ -333,7 +392,7 @@ export function PenaltiesPage() {
                     <p className="text-xs text-slate-500 dark:text-slate-400">{describeRuleRecurrence(rule)}</p>
                   </div>
                   <span className="text-sm font-bold text-rose-600 dark:text-rose-400">
-                    -{formatEuro(rule.amount)}
+                    {ruleCurrency === 'points' ? `-${rule.amount} pts` : `-${formatEuro(rule.amount)}`}
                   </span>
                   <Switch
                     checked={rule.active}
@@ -367,31 +426,35 @@ export function PenaltiesPage() {
       <div>
         <h2 className="mb-3 text-lg font-bold">Historique des pénalités</h2>
         <div className="space-y-3">
-          {penalties.map((tx) => {
-            const penalizedChild = users.find((u) => u.id === tx.childId)
-            const cancellable = !tx.cancelled && Date.now() - tx.createdAt <= PENALTY_CANCEL_WINDOW
+          {penalties.map((entry) => {
+            const penalizedChild = users.find((u) => u.id === entry.childId)
+            const cancellable = !entry.cancelled && Date.now() - entry.createdAt <= PENALTY_CANCEL_WINDOW
             return (
               <Card
-                key={tx.id}
+                key={entry.id}
                 className={`flex items-center gap-3 border-l-4 p-4 ${
-                  tx.cancelled ? 'border-l-slate-300 opacity-60' : 'border-l-rose-500'
+                  entry.cancelled ? 'border-l-slate-300 opacity-60' : 'border-l-rose-500'
                 }`}
               >
                 {penalizedChild && <ChildAvatar user={penalizedChild} size="sm" />}
                 <div className="min-w-0 flex-1">
-                  <p className={`text-sm font-semibold ${tx.cancelled ? 'line-through' : ''}`}>
-                    {tx.description.replace('⚠️ ', '')}
+                  <p className={`text-sm font-semibold ${entry.cancelled ? 'line-through' : ''}`}>
+                    {entry.description.replace('⚠️ ', '')}
                   </p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">{formatDateTime(tx.createdAt)}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{formatDateTime(entry.createdAt)}</p>
                 </div>
-                {tx.cancelled && <Badge>Annulée</Badge>}
-                <Amount cents={tx.amount} className="text-sm" />
-                {!tx.cancelled && cancellable && (
+                {entry.cancelled && <Badge>Annulée</Badge>}
+                {entry.currency === 'points' ? (
+                  <Amount points={entry.amount} className="text-sm" />
+                ) : (
+                  <Amount cents={entry.amount} className="text-sm" />
+                )}
+                {!entry.cancelled && cancellable && (
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => {
-                      cancelPenalty(tx.id, user.id)
+                      cancelPenalty(entry.id, user.id)
                       toast('Pénalité annulée.')
                     }}
                   >
@@ -399,15 +462,15 @@ export function PenaltiesPage() {
                     Annuler
                   </Button>
                 )}
-                {!tx.cancelled && (
+                {!entry.cancelled && (
                   <>
-                    <Button variant="ghost" size="sm" onClick={() => setEditing(tx)} aria-label="Modifier">
+                    <Button variant="ghost" size="sm" onClick={() => setEditing(entry)} aria-label="Modifier">
                       <Pencil size={16} />
                     </Button>
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => setDeleting(tx)}
+                      onClick={() => setDeleting(entry)}
                       aria-label="Supprimer"
                       className="text-rose-500"
                     >
@@ -426,13 +489,13 @@ export function PenaltiesPage() {
         open={confirming}
         onClose={() => setConfirming(false)}
         title="Confirmer la pénalité"
-        message={`Retirer ${formatEuro(cents)} à ${child?.name} pour « ${title.trim()} » ?`}
+        message={`Retirer ${currency === 'points' ? `${resolvedAmount} pts` : formatEuro(resolvedAmount)} à ${child?.name} pour « ${title.trim()} » ?`}
         confirmLabel="Oui, appliquer"
         danger
         onConfirm={confirmApply}
       />
 
-      {editing && <EditPenaltyModal tx={editing} onClose={() => setEditing(null)} />}
+      {editing && <EditPenaltyModal entry={editing} onClose={() => setEditing(null)} />}
 
       <ConfirmModal
         open={deleting !== null}
